@@ -1,84 +1,35 @@
-# from sklearn.datasets import fetch_rcv1
-import mlflow, datetime, os, pickle, random
-# import sklearn
-from joblib import dump
-from sklearn.datasets import make_classification
-from sklearn.metrics import accuracy_score, f1_score
-import sys
-from sklearn.ensemble import RandomForestClassifier
 import argparse
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath('..'))
+import joblib
+import mlflow
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import accuracy_score, f1_score
 
+from data import get_splits
 
-if __name__ == '__main__':
+ROOT = Path(__file__).resolve().parent.parent
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--timestamp", type=str, required=True, help="Timestamp from GitHub Actions")
-    args = parser.parse_args()
-    
-    # Access the timestamp
-    timestamp = args.timestamp
-    
-    # Use the timestamp in your script
-    print(f"Timestamp received from GitHub Actions: {timestamp}")
-    
-    # Check if the file exists within the folder
-    X, y = make_classification(
-                            n_samples=random.randint(0, 2000),
-                            n_features=6,
-                            n_informative=3,
-                            n_redundant=0,
-                            n_repeated=0,
-                            n_classes=2,
-                            random_state=0,
-                            shuffle=True,
-                        )
-    if os.path.exists('data'): 
-        with open('data/data.pickle', 'wb') as data:
-            pickle.dump(X, data)
-            
-        with open('data/target.pickle', 'wb') as data:
-            pickle.dump(y, data)  
-    else:
-        os.makedirs('data/')
-        with open('data/data.pickle', 'wb') as data:
-            pickle.dump(X, data)
-            
-        with open('data/target.pickle', 'wb') as data:
-            pickle.dump(y, data)  
-            
-    mlflow.set_tracking_uri("./mlruns")
-    dataset_name = "Reuters Corpus Volume"
-    current_time = datetime.datetime.now().strftime("%y%m%d_%H%M%S")
-    experiment_name = f"{dataset_name}_{current_time}"    
-    experiment_id = mlflow.create_experiment(f"{experiment_name}")
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--timestamp", required=True)
+    ts = ap.parse_args().timestamp
 
-    with mlflow.start_run(experiment_id=experiment_id,
-                        run_name= f"{dataset_name}"):
-        
-        params = {
-                    "dataset_name": dataset_name,
-                    "number of datapoint": X.shape[0],
-                    "number of dimensions": X.shape[1]}
-        
-        mlflow.log_params(params)
-            
-        
-        forest = RandomForestClassifier(random_state=0)
-        forest.fit(X, y)
-        
-        y_predict = forest.predict(X)
-        mlflow.log_metrics({'Accuracy': accuracy_score(y, y_predict),
-                            'F1 Score': f1_score(y, y_predict)})
-        
-        if not os.path.exists('models/'): 
-            # then create it.
-            os.makedirs("models/")
-            
-        # After retraining the model
-        model_version = f'model_{timestamp}'  # Use a timestamp as the version
-        model_filename = f'{model_version}_dt_model.joblib'
-        dump(forest, model_filename)
-                    
+    # diabetes yes/no dataset instead of make_classification
+    X_tr, X_te, y_tr, y_te = get_splits()
 
+    params = {"n_estimators": 150, "learning_rate": 0.05, "max_depth": 3,
+              "subsample": 0.8, "random_state": 42}
+
+    mlflow.set_tracking_uri(f"sqlite:///{ROOT / 'mlflow.db'}")
+    mlflow.set_experiment("pima_diabetes_gb")
+    with mlflow.start_run(run_name=f"train_{ts}"):
+        mlflow.log_params({**params, "n_train": len(y_tr), "n_test": len(y_te)})
+        model = GradientBoostingClassifier(**params).fit(X_tr, y_tr)
+        pred = model.predict(X_tr)
+        mlflow.log_metrics({"train_accuracy": accuracy_score(y_tr, pred),
+                            "train_f1": f1_score(y_tr, pred)})
+
+    (ROOT / "models").mkdir(exist_ok=True)
+    joblib.dump(model, ROOT / "models" / f"model_{ts}_gb.joblib")
+    print(f"saved models/model_{ts}_gb.joblib")

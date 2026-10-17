@@ -1,6 +1,5 @@
 scikit-learn
-numpy
-pandas
-pytest
-ipykernel
+joblib
 mlflow
+pandas
+ipykernel

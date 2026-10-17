@@ -1,67 +1,55 @@
-name: Periodic Model Calibration - Ghithub Lab 2
+name: Periodic Model Calibration - Github Lab 2
 
-on: 
+on:
   schedule:
-    - cron: '0 0 * * *' 
+    - cron: '0 0 * * *'   # daily at midnight UTC
+  workflow_run:            # also right after a retrain succeeds
+    workflows: ["Model Retraining on Push to Main - Github Lab 2"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      method:
+        description: "isotonic or sigmoid"
+        default: "isotonic"
+
+permissions:
+  contents: write
+
+env:
+  LAB: Labs/Github_Labs/Lab2
 
 jobs:
-  retrain:
+  calibrate:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        ref: main   
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: 3.9
+        python-version: "3.11"
+        cache: pip
 
     - name: Install dependencies
-      run: pip install -r Labs/Github_Labs/Lab2/requirements.txt
+      run: pip install -r $LAB/requirements.txt
 
-    - name: Generate and Store Timestamp
-      run: |
-        timestamp=$(date '+%Y%m%d%H%M%S')
-        echo "$timestamp" > timestamp.txt
-      id: timestamp 
-
-    - name: Check File Permissions
-      run: |
-        ls -l Labs/Github_Labs/Lab2/src/train_model.py
-
-    - name: Set File Permissions
-      run: |
-        chmod +x Labs/Github_Labs/Lab2/src/train_model.py
-
-    - name: Retrain Model
-      run: |
-        timestamp=$(cat timestamp.txt) # Use the timestamp in your training script
-        python Labs/Github_Labs/Lab2/src/train_model.py --timestamp "$timestamp"
-
-    - name: Evaluate Model and Log Metrics
-      run: |
-        timestamp=$(cat timestamp.txt) # Use the timestamp in your training script
-        python Labs/Github_Labs/Lab2/src/evaluate_model.py  --timestamp "$timestamp" # Assuming you have a script for model evaluation
-        metrics_filename="${timestamp}_metrics.json"
-        mv $metrics_filename Labs/Github_Labs/Lab2/metrics/$metrics_filename
-      continue-on-error: false  # Continue even if evaluation fails
-
-    - name: Store and Version the New Model
-      run: |
-        timestamp=$(cat timestamp.txt)
-        model_filename="model_${timestamp}_dt_model.joblib"
-        mv $model_filename Labs/Github_Labs/Lab2/models/$model_filename
+    - name: Calibrate Latest Model
+      run: python $LAB/src/calibrate_model.py --method "${{ github.event.inputs.method || 'isotonic' }}"
 
     - name: Commit and Push Changes
       run: |
-        git config --global user.email "26876927+raminmohammadi@users.noreply.github.com"
-        git config --global user.name "raminmohammadi"
-        git add Labs/Github_Labs/Lab2/metrics/$metrics_filename Labs/Github_Labs/Lab2/models/$model_filename
-        git commit -m "Add metrics and updated model"
-        git push
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-
+        git config --global user.name "rexremigius"
+        git config --global user.email "60751701+rexremigius@users.noreply.github.com"
+        git add -f $LAB/models/*_calibrated.joblib $LAB/metrics/*_calibration.json
+        if ! git diff --cached --quiet; then
+          git commit -m "Lab2: calibrated model [skip ci]"
+          git pull --rebase
+          git push
+        else
+          echo "No changes to commit."
+        fi

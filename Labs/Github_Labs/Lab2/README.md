@@ -1,3 +1,62 @@
+# Changes made for the Lab2 assignment
+ 
+`src/data.py` (new)
+ 
+* Loads the Pima Indians diabetes dataset from OpenML (768 patients, 8 features). The target is yes/no: does the patient have diabetes.
+* Splits it 80/20 with a fixed seed so every script uses the same test set.
+* Caches the download in `data/`.
+`src/train_model.py`
+ 
+* Switched from random `make_classification` data to the diabetes dataset. The old code could also pick `n_samples=0`.
+* Switched from a random forest to gradient boosting.
+* Saves the model straight into `models/` instead of the working directory.
+* MLflow now logs to `sqlite:///mlflow.db`, since newer MLflow versions no longer accept the `./mlruns` folder.
+* Switched file paths to `pathlib` and removed unused imports.
+`src/evaluate_model.py`
+ 
+* Fixed the evaluation. It used to generate a new random dataset, so the scores didn't mean anything. It now uses the held-out test set.
+* Saves accuracy, F1 and ROC AUC to `metrics/`.
+* Added a quality gate: if ROC AUC is below 0.75, the script fails and nothing gets committed. I went with AUC over F1 because only about 35% of patients are positive.
+`src/calibrate_model.py` (new)
+ 
+* The workflow is called "calibration", but the original code never calibrated anything. This script wraps the model in `CalibratedClassifierCV` (isotonic by default, `--method sigmoid` for Platt).
+* Picks the latest model automatically and saves the Brier score before and after.
+`src/test.ipynb`
+ 
+* Rewritten for the new dataset and model.
+* Fixed the old bugs: `toarry`, swapped `pickle.dump` arguments, `test_size=0.9`, `.jopblib`.
+`model_calibration_on_push.yml`
+ 
+* Retrains only when Lab2 changes, not on every push to `main`.
+* Train, evaluate, upload the MLflow db as an artifact, commit model and metrics.
+`model_calibration.yml`
+ 
+* Now actually calibrates the latest model (before, it just retrained again).
+* Runs nightly, after every successful retrain, and on manual trigger.
+* Fixed `$metrics_filename` being undefined in the commit step.
+Both workflows
+ 
+* Upgraded to `checkout@v4`, `setup-python@v5` and Python 3.11, with `cache: pip`.
+* Removed the file permission steps and the `mv` steps, since neither is needed anymore.
+* Commits come from the GitHub Actions bot instead of a personal account.
+* Added `git pull --rebase` before pushing.
+## Results (local run)
+ 
+Accuracy 0.747, F1 0.621, ROC AUC 0.827. Brier score went from 0.1647 to 0.1604 after isotonic calibration (sigmoid gave 0.1609).
+ 
+## Run locally
+ 
+```bash
+pip install -r requirements.txt
+python src/train_model.py --timestamp local
+python src/evaluate_model.py --timestamp local
+python src/calibrate_model.py
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+ 
+---
+
+
 # Using GitHub Actions for Model Training and Versioning
 
 This repository demonstrates how to use GitHub Actions to automate the process of training a machine learning model, storing the model, and versioning it. This allows you to easily update and improve your model in a collaborative environment.
