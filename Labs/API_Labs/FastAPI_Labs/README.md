@@ -1,5 +1,107 @@
+# FastAPI Lab: California Housing Price API (Modified)
 
----
+This is a modified version of the course FastAPI lab. The original trains a Decision Tree classifier on Iris; this version swaps in a different dataset, task and model, and extends the API. The original README is kept unchanged [below](#original-lab-readme-iris-classification).
+
+## What changed
+
+| | Original lab | This version |
+|---|---|---|
+| Dataset | Iris (150 flowers, 4 features) | California Housing (20,640 census block groups, 8 features) |
+| Task | Classification (3 species) | Regression (median house value) |
+| Model | `DecisionTreeClassifier` | `HistGradientBoostingRegressor` with early stopping |
+| Evaluation | None | R², MAE and RMSE on a 20% held-out test set, saved with the model |
+| Endpoints | `/`, `/predict` | `/`, `/model-info`, `/predict`, `/predict/batch` |
+| Input validation | Types only | Types plus ranges (positive counts, coordinates inside California) |
+| Model loading | Reloaded from disk on every request | Loaded once at startup; the server refuses to start if the model is missing |
+| Model file | `model/iris_model.pkl` | `model/housing_model.pkl` (model + feature names + test metrics) |
+| Dependencies | `scikit-learn==1.5.1`, `fastapi[all]==0.111.1` | `scikit-learn==1.7.2`, `fastapi[standard]==0.141.1` (the old pin has no Python 3.13 build) |
+
+Files changed: `src/data.py`, `src/train.py`, `src/predict.py`, `src/main.py`, `requirements.txt`, and `model/`.
+
+## Dataset
+
+The [California Housing dataset](https://scikit-learn.org/stable/datasets/real_world.html#california-housing-dataset) comes from the 1990 U.S. census. Each row is one census **block group** (typically 600 to 3,000 people). `fetch_california_housing()` downloads it on first use (~400 KB) and caches it in `~/scikit_learn_data`.
+
+| API field | Dataset column | Meaning | Validation |
+|---|---|---|---|
+| `median_income` | MedInc | Median household income, in tens of thousands of dollars (8.3 = $83,000) | > 0 |
+| `house_age` | HouseAge | Median age of houses, in years | ≥ 0 |
+| `avg_rooms` | AveRooms | Average rooms per household | > 0 |
+| `avg_bedrooms` | AveBedrms | Average bedrooms per household | > 0 |
+| `population` | Population | People living in the block group | ≥ 0 |
+| `avg_occupancy` | AveOccup | Average people per household | > 0 |
+| `latitude` | Latitude | Latitude | 32.5 to 42.0 |
+| `longitude` | Longitude | Longitude | -124.5 to -114.0 |
+
+**Target:** median house value, in $100,000s. The census capped values at $500,001, so the model rarely predicts much above 5.0.
+
+## Model
+
+`HistGradientBoostingRegressor` builds an ensemble of shallow decision trees, each correcting the errors of the ones before it. Early stopping holds out 10% of the training data and stops adding trees once the validation score stops improving (225 trees in the saved model).
+
+| Metric (20% held-out test set) | Value |
+|---|---|
+| R² | 0.846 |
+| MAE | 0.297 (≈ $29,700) |
+| RMSE | 0.449 (≈ $44,900) |
+
+## Running the modified lab
+
+```bash
+pip install -r requirements.txt
+cd src
+python train.py              # downloads the data on first run, trains, prints metrics
+uvicorn main:app --reload    # then open http://127.0.0.1:8000/docs
+```
+
+`train.py` output:
+
+```
+Trained HistGradientBoostingRegressor (225 boosting iterations)
+Test R²:   0.8461
+Test MAE:  0.2966  (~$29,660)
+Test RMSE: 0.4491  (~$44,910)
+```
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | Health check: `{"status": "healthy"}` |
+| GET | `/model-info` | Model type, feature names, test metrics, training timestamp |
+| POST | `/predict` | Predict one block group |
+| POST | `/predict/batch` | Predict up to 1,000 block groups in one request (400 if empty or over the limit) |
+
+Prediction routes use plain `def` rather than `async def`. Inference is CPU-bound, so FastAPI runs these routes in a thread pool and a slow prediction doesn't block other requests.
+
+## Screenshots
+
+### API documentation (`/docs`)
+
+![California Housing API docs](assets/housing_docs.png)
+
+### `GET /model-info`: metrics recorded at training time
+
+![model-info response](assets/housing_model_info.png)
+
+### `POST /predict`: a block group in Berkeley
+
+The request body is pre-filled from the example in the `HousingData` schema.
+
+![predict response](assets/housing_predict.png)
+
+### `POST /predict/batch`: Berkeley, Fresno and Irvine in one request
+
+![batch predict response](assets/housing_predict_batch.png)
+
+### Validation error: New York coordinates are rejected with a 422
+
+Pydantic rejects the request before it reaches the model, because longitude -74.01 is outside the allowed California range.
+
+![validation error response](assets/housing_validation_error.png)
+
+
+----
 - Video Explanation: [FastAPI lab](https://www.youtube.com/watch?v=KReburHqRIQ&list=PLcS4TrUUc53LeKBIyXAaERFKBJ3dvc9GZ&index=4)
 - Blog: [FastAPI Lab-1](https://www.mlwithramin.com/blog/fastapi-lab1)
 
@@ -9,7 +111,7 @@
 
 In this Lab, we will learn how to expose ML models as APIs using [FastAPI](https://fastapi.tiangolo.com/) and [uvicorn](https://www.uvicorn.org/).
 1. **FastAPI**: FastAPI is a modern, fast (high-performance), web framework for building APIs with Python based on standard Python type hints.
-2. **uvicorn**: Uvicorn is an [Asynchronous Server Gateway Interface - ASGI](https://youtu.be/vKjCkeJGbNk) web server implementation for Python. It is often used to serve FastAPI aplications.
+2. **uvicorn**: Uvicorn is an [Asynchronous Server Gateway Interface (ASGI)](https://youtu.be/vKjCkeJGbNk) web server implementation for Python. It is often used to serve FastAPI aplications.
 
 The workflow involves the following steps:
 1. Training a Decision Tree Classifier on Iris Dataset.
@@ -56,7 +158,7 @@ Note:
     ```bash
     uvicorn app:main --reload
     ```
-4. Testing endpoints - to view the documentation of your api model you can use [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) (or) [http://localhost:8000/docs](http://localhost:8000/docs) after you run you run your FastAPI app.
+4. Testing endpoints: to view the documentation of your api model you can use [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) (or) [http://localhost:8000/docs](http://localhost:8000/docs) after you run you run your FastAPI app.
     
 ![API page](assets/docs.png)
    
@@ -77,7 +179,7 @@ You can also test out the results of your endpoints by interacting with them. Cl
     ```
     uvicorn main:app --reload
     ```
-- In this command, **main** is the name of the Python file containing your app instance (without the .py extension), and **app** is the name of the instance itself. The **--reload** flag tells uvicorn to restart the server whenever code changes are detected, which is useful during development and should not be used in production.
+- In this command, **main** is the name of the Python file containing your app instance (without the .py extension), and **app** is the name of the instance itself. The `--reload` flag tells uvicorn to restart the server whenever code changes are detected, which is useful during development and should not be used in production.
 - All the functions which should be used as API should be prefixed by **@app.get("/followed_by_endpoint_name")** or **@app.post("/followed_by_endpoint_name")**. This particular syntax is used to define route handlers (which function should handle an incoming request based on the URL and HTTP method), which are the functions responsible for responding to client requests to a given endpoint.
     1. **Decorator (@)**: This symbol is used to define a decorator, which is a way to dynamically add functionality to functions or methods. In FastAPI, decorators are used to associate a function with a particular HTTP method and path.
     2. **App Instance (app)**: This represents an instance of the FastAPI class. It is the core of your application and maintains the list of defined routes, request handlers, and other configurations.
